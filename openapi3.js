@@ -100,9 +100,9 @@ function processOperation(op, method, /* resource, */state) {
       consumes = Object.keys(op.requestBody.content);
     }
   }
-  _.forIn(op.responses, function (response) {
+  _.forIn(op.responses, function (response, key, obj) {
     if (response.$ref) {
-      response = jptr.jptr(openapi, response.$ref);
+      obj[key] = response = jptr.jptr(openapi, response.$ref);
     }
     if (response.content) {
       Array.prototype.push.apply(produces, Object.keys(response.content));
