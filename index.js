@@ -3,7 +3,7 @@ var openapi3 = require('./openapi3.js');
 var asyncapi = require('./asyncapi.js');
 
 function convert(api, options, callback) {
-
+// console.log(api);
     if (typeof api === 'string') {
         var apiblueprint = require('./apiblueprint.js');
         apiblueprint.convert(api, options, callback);

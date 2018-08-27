@@ -41,6 +41,7 @@ function convertToToc(source, dest, callbackKey, callbackSetupOperationId) {
         }
         var uniqueName = (method.operationId || mkey + '_' + pkey).split(/\/|\s/g).join('_');
         var tagName = _.get(method, ['tags', 0], 'Default');
+        // console.log(tagName);
 
         if (!dest.resources[tagName]) {
           var matchedTag = dest.tags && _.find(dest.tags, function (tag) {
@@ -68,6 +69,8 @@ function convertToToc(source, dest, callbackKey, callbackSetupOperationId) {
       }
     })
   })
+
+  // console.log(Object.keys(dest.resources));
 
   delete dest.paths; // to keep size down
   delete dest.definitions; // ditto
@@ -212,12 +215,15 @@ function processOperation(op, method, /* resource, */state) {
     param.exampleValues.json = '{}';
     param.exampleValues.object = {};
     try {
-      var obj = sampler.sample(param.exampleSchema, { skipReadOnly: true });
+      let obj = sampler.sample(param.exampleSchema, { skipReadOnly: true });
+      // console.log('parameters', param.name, obj)
       var t = obj;
       if (typeof t == 'string') t = "'" + t + "'";
       if (typeof t == 'object') t = JSON.stringify(t, null, 2);
       param.exampleValues.json = t;
       param.exampleValues.object = obj;
+
+      // console.log(param.exampleValues)
     }
     catch (ex) {
       console.error(ex);
@@ -230,6 +236,7 @@ function processOperation(op, method, /* resource, */state) {
       data.headerParameters.push(param);
     }
     if (param.in == 'query') {
+      // console.log(param.name, param.exampleValues);
       let temp = param.exampleValues.object;
       if (Array.isArray(temp)) {
         temp = '...';
@@ -342,7 +349,7 @@ function processOperation(op, method, /* resource, */state) {
       param = parameters[p];
       if ((param.in === 'body') && (param.depth == 0)) {
         var xmlWrap = '';
-        var obj = common.dereference(param.schema, state.getCircles(), openapi, common.clone, options.aggressive);
+        let obj = common.dereference(param.schema, state.getCircles(), openapi, common.clone, options.aggressive);
         if (obj && !paramHeader) {
           state.appendTemplate('heading_body_parameter');
           // applyTemplate('heading_body_parameter', state);
@@ -354,6 +361,7 @@ function processOperation(op, method, /* resource, */state) {
         if (obj && options.sample) {
           try {
             obj = sampler.sample(obj, { skipReadOnly: true });
+            // console.log('body', obj)
           }
           catch (ex) {
             console.error(ex);
@@ -381,6 +389,8 @@ function processOperation(op, method, /* resource, */state) {
         }
       }
     }
+
+    // console.log(parameters);
 
     data.parameters = parameters; // redundant?
     state.appendTemplate('parameters');
@@ -465,7 +475,7 @@ function processOperation(op, method, /* resource, */state) {
         var cta = [ct];
         if (contentType.schema) {
           var xmlWrap = '';
-          var obj = {};
+          let obj = {};
           try {
             obj = common.dereference(contentType.schema, state.getCircles(), openapi, common.clone, options.aggressive);
           }
@@ -478,7 +488,8 @@ function processOperation(op, method, /* resource, */state) {
           if (Object.keys(obj).length > 0) {
             if (options.sample) {
               try {
-                obj = sampler.sample(obj); // skipReadOnly: false
+                // console.log('responses', obj)
+                obj = sampler.sample(obj, { skipReadOnly: false }); // skipReadOnly: false
               }
               catch (ex) {
                 console.error(ex);
@@ -659,11 +670,12 @@ function convert(openapi, options, callback) {
       var data = state.getData();
 
       // ugh that's ugly
-      var obj;
+      let obj;
       if (options.sample) {
         try {
-          obj = sampler.sample(schema); // skipReadOnly: false
+          obj = sampler.sample(schema, { skipReadOnly: false }); // skipReadOnly: false
           data.schema = obj; // temporary substitution for a sample template, that's really ugly
+          // console.log('sample', obj)
           state.appendTemplate('schema_sample');
           // applyTemplate('schema_sample', state);
         }

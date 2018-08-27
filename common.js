@@ -4,6 +4,8 @@ var util = require('util');
 var recurse = require('openapi_optimise/common.js').recurse;
 var circular = require('openapi_optimise/circular.js');
 var jptr = require('jgexml/jpath.js');
+var _mapValues = require('lodash/mapValues.js');
+var _forOwn = require('lodash/forOwn.js');
 
 const MAX_SCHEMA_DEPTH=100;
 
@@ -37,14 +39,60 @@ function dereference(obj, circles, api, cloneFunc, aggressive) {
     var changes = 1;
     while (changes > 0) {
         changes = 0;
-        recurse(obj, {}, function (obj, state) {
-            if ((state.key === '$ref') && (typeof obj === 'string') && (!circFunc(circles, obj))) {
-                state.parents[state.parents.length - 2][state.keys[state.keys.length - 2]] = cloneFunc(jptr.jptr(api, obj));
-                state.parents[state.parents.length - 2][state.keys[state.keys.length - 2]]["x-widdershins-oldRef"] = obj;
-                delete state.parent["$ref"]; // just in case
-                changes++;
+
+        _mapValues(obj, processItem)
+
+        function processItem(value, key, obj) {
+            if (value === undefined) { console.log(key + ' is ' + value); return; }
+            if (value.__parent) return;
+            if (typeof value === 'object') {
+                value.__parent = obj;
+                value.__pkey = key;
+                _mapValues(value, processItem);
+                delete value.__parent;
+                delete value.__pkey;
             }
-        });
+
+            if (key === '$ref') {
+                changes++;
+                replaceRef(obj);
+            }
+        }
+
+        function replaceRef(obj) {
+            if (obj.$ref && obj.__parent && obj.__pkey && !circular.isCircular(circles, obj.$ref)) {
+                var initialObject = obj;
+                var oRef = obj.$ref;
+                var parent = obj.__parent;
+                var pkey = obj.__pkey;
+
+                obj = cloneFunc(jptr.jptr(api, obj["$ref"]));
+                obj["x-widdershins-oldRef"] = oRef;
+
+                if (initialObject.description) {
+                    obj.description = initialObject.description;
+                }
+
+                if (initialObject.example) {
+                    obj.example = initialObject.example;
+                }
+
+
+                parent[pkey] = obj;
+            }
+        }
+        // recurse(obj, {}, function (obj, key, state) {
+
+        //     if ((key === '$ref') && (typeof obj[key] === 'string') && (!circFunc(circles, obj[key]))) {
+        //         state.parent[state.pkey] = cloneFunc(jptr.jptr(api, obj));
+        //         state.parent[state.pkey]["x-widdershins-oldRef"] = obj;
+        //         console.log('1');
+        //         // state.parents[state.parents.length - 2][state.keys[state.keys.length - 2]] = cloneFunc(jptr.jptr(api, obj));
+        //         // state.parents[state.parents.length - 2][state.keys[state.keys.length - 2]]["x-widdershins-oldRef"] = obj;
+        //         delete state.parent["$ref"]; // just in case
+        //         changes++;
+        //     }
+        // });
     }
     return obj;
 }
@@ -139,37 +187,9 @@ function extract(o,parent,seen,depth,callback){
     });
 }
 
-function schemaToArray(schema,depth,lines,trim) {
-
-    let seen = [];
-    extract(schema,'',seen,depth,function(obj,depth,required,oldRef){
-        let prefix = '»'.repeat(depth);
-        for (let p in obj) {
-            if (obj[p]) {
-                var prop = {};
-                prop.name = (prefix+' '+p).trim();
-                prop.in = 'body';
-                prop.type = obj[p].type||'Unknown';
-                if (obj[p].format) prop.type = prop.type+'('+obj[p].format+')';
-
-                if (((prop.type === 'object') || (prop.type === 'Unknown')) && oldRef) {
-                    oldRef = oldRef.split('/').pop();
-                    prop.type = '['+oldRef+'](#schema'+gfmLink(oldRef)+')';
-                }
-
-                if (obj[p]["x-widdershins-isArray"]) {
-                    prop.type = '['+prop.type+']';
-                }
-
-                prop.required = required;
-                prop.description = (obj[p].description && obj[p].description !== 'undefined') ? obj[p].description : 'No description'; // the actual string 'undefined'
-                if (trim && typeof prop.description === 'string') prop.description = prop.description.split('\n').join(' ');
-                prop.depth = depth;
-                if (obj[p].enum) prop.schema = {enum:obj[p].enum};
-                lines.push(prop);
-            }
-        }
-    });
+function schemaToArray(schema,depth,lines,singleLineDescription) {
+    // console.log(depth, typeof depth);
+    depth = depth || 0;
     if (!schema.properties && !schema.items) {
         let prop = {};
         prop.name = schema.title;
@@ -177,13 +197,73 @@ function schemaToArray(schema,depth,lines,trim) {
         if (!prop.name && schema.additionalProperties) prop.name = 'additionalProperties';
         if (!prop.name && schema.patternProperties) prop.name = 'patternProperties';
         prop.description = schema.description||'No description';
-        if (trim) prop.description = prop.description.split('\n').join(' ');
+        if (singleLineDescription) prop.description = prop.description.split('\n').join(' ');
         prop.type = schema.type||'Unknown';
         prop.required = false;
         prop.in = 'body';
         if (schema.format) prop.type = prop.type+'('+schema.format+')';
         prop.depth = 0;
         lines.unshift(prop);
+    } else {
+        if (schema.type !== 'object' || !schema.properties) {
+            throw new Error('me not know non-object schema');
+        }
+
+        _forOwn(schema.properties, (prop, name) => {
+            prop.__parent = schema;
+            processItem(name, prop, schema, Boolean(schema.required && schema.required.indexOf(name) !== -1), depth);
+            delete prop.__parent;
+            // schemaToArray(prop, depth + 1, lines, trim);
+        })
+    }
+
+    function processItem(name, item, schema, isRequired, depth) {
+        if (item.type === 'array') {
+            item.items["x-widdershins-isArray"] = true;
+            return processItem(name, item.items, item, isRequired, depth); // skip array itself, process its item instead
+        }
+        let prefix = '»'.repeat(depth);
+        let oldRef = item["x-widdershins-oldRef"] || item.$ref || null;
+        let prop = {
+            name: `${prefix} ${name}`.trim(),
+            in: 'body',
+            type: (item.type || 'Unknown') + (item.format ? `(${item.format})` : ''),
+            required: isRequired,
+            readOnly: item.readOnly === undefined ? schema.readOnly : item.readOnly,
+            writeOnly: item.writeOnly === undefined ? schema.writeOnly : item.writeOnly,
+            description:
+                item.description && item.description !== 'undefined'
+                    ? item.description
+                    : (schema.description ? schema.description
+                    : 'No description'), // the actual string 'undefined',
+            depth: depth,
+            schema: item.enum ? item.enum : item.schema,
+        };
+
+        // console.log(name, prop.name, isRequired, depth);
+
+        if (singleLineDescription && typeof prop.description === 'string') {
+            prop.description = prop.description.split('\n').join(' ')
+        }
+
+        if (((prop.type === 'object') || (prop.type === 'Unknown')) && oldRef) {
+            oldRef = oldRef.split('/').pop();
+            prop.type = '['+oldRef+'](#schema'+gfmLink(oldRef)+')';
+        }
+
+        if (item["x-widdershins-isArray"]) {
+            prop.type = '['+prop.type+']';
+        }
+
+        lines.push(prop);
+        if (item.type === 'object') {
+            _forOwn(item.properties, (prop, name) => {
+                if (prop.__parent) return;
+                prop.__parent = schema;
+                processItem(name, prop, item, Boolean(item.required && item.required.indexOf(name) !== -1), depth + 1);
+                delete prop.__parent;
+            })
+        }
     }
 }
 

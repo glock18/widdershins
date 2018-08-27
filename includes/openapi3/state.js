@@ -46,23 +46,25 @@ State.prototype = {
   },
   appendTemplate: function (templateName) {
     // questionable decision to allow templateCallback returning a completely different object. why?
-    var options = this.getOptions();
-    var data = this.getData();
-    data = options.templateCallback(templateName, 'pre', data);
-    handleCallbackResult(this, data);
 
-    // console.log(data);
-    this.appendContent(this.templates[templateName](data) + '\n');
+    if (typeof this.templates[templateName] === 'function') { // empty template support
+      var options = this.getOptions();
+      var data = this.getData();
+      data = options.templateCallback(templateName, 'pre', data);
+      handleCallbackResult(this, data);
 
-    data = options.templateCallback(templateName, 'post', data);
-    handleCallbackResult(this, data);
+      this.appendContent(this.templates[templateName](data) + '\n');
 
-    this.setData(data);
+      data = options.templateCallback(templateName, 'post', data);
+      handleCallbackResult(this, data);
 
-    function handleCallbackResult(state, data) {
-      if (data.append) {
-        state.appendContent(data.append);
-        delete data.append;
+      this.setData(data);
+
+      function handleCallbackResult(state, data) {
+        if (data.append) {
+          state.appendContent(data.append);
+          delete data.append;
+        }
       }
     }
   }
@@ -77,6 +79,8 @@ function getTemplates(state) {
   if (options.user_templates) {
     templates = Object.assign(templates, dot.process({ path: options.user_templates }));
   }
+
+  // console.log(templates);
 
   return templates;
 }
